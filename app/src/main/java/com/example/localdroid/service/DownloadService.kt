@@ -14,6 +14,7 @@ import android.provider.MediaStore
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
+import com.example.localdroid.Engine
 import com.example.localdroid.LocalDroidApp
 import com.example.localdroid.data.DownloadRepository
 import com.example.localdroid.data.QualityOption
@@ -42,13 +43,16 @@ class DownloadService : Service() {
 
         scope.launch {
             try {
-                // ✅ الإصلاح: تهيئة مضمونة للمحرك قبل أي تحميل
-                YoutubeDL.getInstance().init(applicationContext)
+                // تهيئة مؤمّنة عبر البوابة الوحيدة
+                Engine.ensure(applicationContext)
+
+                // مجلد تنزيلات خاص ومنظم (لا يمسّه التنظيف الذاتي أبدًا)
+                val outDir = File(filesDir, "downloads").apply { mkdirs() }
 
                 val request = repo.buildRequest(
                     url,
                     QualityOption(label, qualityCode),
-                    filesDir.absolutePath
+                    outDir.absolutePath
                 )
 
                 YoutubeDL.getInstance().execute(request) { progress, etaInSeconds, line ->
@@ -56,7 +60,7 @@ class DownloadService : Service() {
                     updateNotification(notificationId, progress / 100f, "${progress.toInt()}%$eta", label)
                 }
 
-                moveToMediaStore(filesDir)
+                moveToMediaStore(outDir)
                 updateNotification(notificationId, 1f, "Complete ✔", label)
                 stopWithDelay(notificationId, 2_000)
             } catch (e: Exception) {
@@ -70,9 +74,9 @@ class DownloadService : Service() {
         return START_NOT_STICKY
     }
 
-    /** نقل الملف من مجلد التطبيق إلى مجلد عام عبر MediaStore (متوافق مع Scoped Storage) */
-    private fun moveToMediaStore(privateDir: File) {
-        val recent = privateDir.listFiles()?.filter {
+    /** نقل الملفات المكتملة من مجلد التطبيق إلى مجلد عام عبر MediaStore */
+    private fun moveToMediaStore(scanDir: File) {
+        val recent = scanDir.listFiles()?.filter {
             it.isFile && it.lastModified() > System.currentTimeMillis() - 120_000
         } ?: return
 
