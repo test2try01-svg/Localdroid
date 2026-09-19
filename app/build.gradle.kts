@@ -52,6 +52,7 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
     implementation("io.coil-kt:coil-compose:2.7.0")
 
-    implementation("com.yausername.youtubedl-android:library:0.16.0")
-    implementation("com.yausername.youtubedl-android:ffmpeg:0.16.0")
+    // ✅ الإحداثيات الصحيحة المنشورة فعليًا على Maven Central
+    implementation("io.github.junkfood02.youtubedl-android:library:0.17.2")
+    implementation("io.github.junkfood02.youtubedl-android:ffmpeg:0.17.2")
 }
