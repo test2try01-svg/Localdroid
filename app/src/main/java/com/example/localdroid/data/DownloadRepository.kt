@@ -1,6 +1,7 @@
 package com.example.localdroid.data
 
 import android.content.Context
+import com.example.localdroid.Engine
 import com.yausername.youtubedl_android.YoutubeDL
 import com.yausername.youtubedl_android.YoutubeDLRequest
 import kotlinx.coroutines.Dispatchers
@@ -9,31 +10,13 @@ import org.json.JSONObject
 
 class DownloadRepository(private val context: Context) {
 
-    /**
-     * يضمن جاهزية المحرك، وعند الفشل يعرض **سلسلة الأسباب الكاملة**
-     * (السبب الحقيقي المخفي داخل cause) بدل الرسالة الغامضة.
-     */
-    private fun ensureEngine() {
-        var lastError: Throwable? = null
-        repeat(2) {
-            try {
-                YoutubeDL.getInstance().init(context)
-                return
-            } catch (e: Throwable) {
-                lastError = e
-            }
-        }
-        val chain = generateSequence(lastError) { it.cause }
-            .joinToString("  <-  ") { "${it.javaClass.simpleName}: ${it.message}" }
-        throw IllegalStateException("Engine init failed: $chain")
-    }
-
     /** جلب معلومات الفيديو (عنوان/صورة/مدة) */
     suspend fun fetchInfo(rawUrl: String): VideoInfo = withContext(Dispatchers.IO) {
         val url = normalizeUrl(rawUrl)
         require(url.isNotBlank()) { "URL is empty" }
 
-        ensureEngine()
+        // تهيئة مؤمّنة ومُسلسلة عبر البوابة الوحيدة
+        Engine.ensure(context)
 
         val request = YoutubeDLRequest(url).apply {
             addOption("--no-playlist")
