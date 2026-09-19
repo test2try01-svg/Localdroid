@@ -16,6 +16,7 @@
         android:name=".LocalDroidApp"
         android:label="LocalDroid"
         android:allowBackup="false"
+        android:extractNativeLibs="true"
         android:theme="@android:style/Theme.Material.NoActionBar">
 
         <activity
