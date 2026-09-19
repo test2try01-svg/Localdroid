@@ -42,6 +42,9 @@ class DownloadService : Service() {
 
         scope.launch {
             try {
+                // ✅ الإصلاح: تهيئة مضمونة للمحرك قبل أي تحميل
+                YoutubeDL.getInstance().init(applicationContext)
+
                 val request = repo.buildRequest(
                     url,
                     QualityOption(label, qualityCode),
@@ -67,7 +70,7 @@ class DownloadService : Service() {
         return START_NOT_STICKY
     }
 
-    /** نقل الملف من مجلد التطبيق إلى مجلد عام عبر MediaStore */
+    /** نقل الملف من مجلد التطبيق إلى مجلد عام عبر MediaStore (متوافق مع Scoped Storage) */
     private fun moveToMediaStore(privateDir: File) {
         val recent = privateDir.listFiles()?.filter {
             it.isFile && it.lastModified() > System.currentTimeMillis() - 120_000
