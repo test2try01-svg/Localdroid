@@ -9,10 +9,33 @@ import org.json.JSONObject
 
 class DownloadRepository(private val context: Context) {
 
+    /**
+     * يضمن جاهزية محرك yt-dlp قبل أي عملية.
+     * آمن للاستدعاء المتكرر — يعود فورًا إذا كان المحرك مهيأً مسبقًا.
+     * يحاول مرتين قبل أن يرمي خطأً واضحًا بدل الرسالة الغامضة القديمة.
+     */
+    private fun ensureEngine() {
+        var lastError: Exception? = null
+        repeat(2) {
+            try {
+                YoutubeDL.getInstance().init(context)
+                return
+            } catch (e: Exception) {
+                lastError = e
+            }
+        }
+        throw IllegalStateException(
+            "Engine init failed: ${lastError?.message ?: lastError?.javaClass?.simpleName ?: "unknown"}"
+        )
+    }
+
     /** جلب معلومات الفيديو (عنوان/صورة/مدة) — يرمي استثناءً برسالة واضحة عند الفشل */
     suspend fun fetchInfo(rawUrl: String): VideoInfo = withContext(Dispatchers.IO) {
         val url = normalizeUrl(rawUrl)
         require(url.isNotBlank()) { "URL is empty" }
+
+        // ✅ الإصلاح: تهيئة مضمونة قبل التنفيذ (أول تشغيل يستخرج الثنائيات 10-60 ثانية)
+        ensureEngine()
 
         val request = YoutubeDLRequest(url).apply {
             addOption("--no-playlist")
@@ -87,6 +110,7 @@ class DownloadRepository(private val context: Context) {
         msg.contains("age-restricted", true) -> "Age-restricted video — not downloadable."
         msg.contains("Sign in", true) -> "Sign-in required for this video."
         msg.contains("removed", true) -> "Video has been removed."
+        msg.contains("instance not initialized", true) -> "Engine still starting… wait 20 seconds and retry."
         else -> "Unsupported URL or platform: ${msg.take(120)}"
     }
 }
