@@ -29,6 +29,9 @@ android {
     kotlinOptions { jvmTarget = "17" }
 
     packaging {
+        // ⚠️ حرج: محرك youtubedl-android يفتح libpython.zip.so كملف عادي
+        // من nativeLibraryDir — يجب استخراج المكتبات عند التثبيت
+        jniLibs.useLegacyPackaging = true
         resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
     }
 }
@@ -47,7 +50,7 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
     implementation("io.coil-kt:coil-compose:2.7.0")
 
-    // محرك yt-dlp + ffmpeg داخل التطبيق (يعمل بدون أي خادم)
-    implementation("io.github.junkfood02.youtubedl-android:library:0.17.2")
-    implementation("io.github.junkfood02.youtubedl-android:ffmpeg:0.17.2")
+    // محرك yt-dlp + ffmpeg داخل التطبيق
+    implementation("com.yausername.youtubedl-android:library:0.16.0")
+    implementation("com.yausername.youtubedl-android:ffmpeg:0.16.0")
 }
