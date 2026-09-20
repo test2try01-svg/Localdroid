@@ -10,30 +10,71 @@ import org.json.JSONObject
 
 class DownloadRepository(private val context: Context) {
 
-    /** جلب معلومات الفيديو (عنوان/صورة/مدة) */
+    companion object {
+        private const val PREFS = "engine"
+        private const val KEY_CLIENT = "working_youtube_client"
+
+        /** سلسلة عملاء التشغيل التي تتجاوز فحص البوت بدون كوكيز */
+        val CLIENT_CHAIN = listOf("", "tv", "tv_embedded", "android", "mweb", "web_embedded", "ios")
+
+        fun savedClient(context: Context): String =
+            context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .getString(KEY_CLIENT, "") ?: ""
+
+        private fun saveClient(context: Context, client: String) {
+            context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .edit().putString(KEY_CLIENT, client).apply()
+        }
+
+        private fun isBotError(msg: String): Boolean =
+            msg.contains("Sign in", true) ||
+            msg.contains("not a bot", true) ||
+            msg.contains("confirm you", true)
+    }
+
+    /** يضيف عميل التشغيل المختار للأمر */
+    private fun YoutubeDLRequest.withClient(client: String): YoutubeDLRequest {
+        if (client.isNotBlank())
+            addOption("--extractor-args", "youtube:player_client=$client")
+        return this
+    }
+
+    /**
+     * جلب المعلومات مع التدوير الذكي:
+     * يجرّب العميل المحفوظ أولًا، ثم بقية السلسلة طالما الخطأ من نوع «فحص بوت»
+     */
     suspend fun fetchInfo(rawUrl: String): VideoInfo = withContext(Dispatchers.IO) {
         val url = normalizeUrl(rawUrl)
         require(url.isNotBlank()) { "URL is empty" }
 
-        // تهيئة مؤمّنة ومُسلسلة عبر البوابة الوحيدة
         Engine.ensure(context)
 
-        val request = YoutubeDLRequest(url).apply {
-            addOption("--no-playlist")
-            addOption("--no-warnings")
-            addOption("--socket-timeout", "15")
-            addOption("-j")
-        }
+        val saved = savedClient(context)
+        val chain = if (saved.isBlank()) CLIENT_CHAIN
+                    else listOf(saved) + CLIENT_CHAIN.filter { it != saved }
 
-        try {
-            val response = YoutubeDL.getInstance().execute(request)
-            parseInfo(JSONObject(response.out))
-        } catch (e: Exception) {
-            throw IllegalArgumentException(mapError(e.message ?: ""))
+        var lastError: Exception? = null
+        for (client in chain) {
+            val request = YoutubeDLRequest(url).apply {
+                addOption("--no-playlist")
+                addOption("--no-warnings")
+                addOption("--socket-timeout", "15")
+                addOption("-j")
+            }.withClient(client)
+
+            try {
+                val response = YoutubeDL.getInstance().execute(request)
+                saveClient(context, client)
+                return@withContext parseInfo(JSONObject(response.out))
+            } catch (e: Exception) {
+                lastError = e
+                if (!isBotError(e.message ?: "")) break
+            }
         }
+        throw IllegalArgumentException(mapError(lastError?.message ?: ""))
     }
 
-    /** بناء أمر التحميل حسب الجودة المختارة */
+    /** أمر التحميل يستخدم العميل الناجح المحفوظ تلقائيًا */
     fun buildRequest(url: String, quality: QualityOption, outputDir: String): YoutubeDLRequest {
         return YoutubeDLRequest(url).apply {
             addOption("--no-playlist")
@@ -56,7 +97,7 @@ class DownloadRepository(private val context: Context) {
                 )
             }
             addOption("--merge-output-format", "mp4")
-        }
+        }.withClient(savedClient(context))
     }
 
     private fun parseInfo(json: JSONObject): VideoInfo {
@@ -88,8 +129,8 @@ class DownloadRepository(private val context: Context) {
     private fun mapError(msg: String): String = when {
         msg.contains("Unable to download", true) -> "Network error — check your connection."
         msg.contains("Private video", true) -> "This video is private."
-        msg.contains("age-restricted", true) -> "Age-restricted video — not downloadable."
-        msg.contains("Sign in", true) -> "Sign-in required for this video."
+        msg.contains("age-restricted", true) -> "Age-restricted video — try again or use cookies."
+        msg.contains("Sign in", true) -> "All player clients blocked on this network — try another network (Wi-Fi/mobile data) or cookies."
         msg.contains("removed", true) -> "Video has been removed."
         msg.contains("instance not initialized", true) -> "Engine still starting… wait 20 seconds and retry."
         else -> "Unsupported URL or platform: ${msg.take(200)}"
