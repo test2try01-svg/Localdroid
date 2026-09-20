@@ -5,12 +5,11 @@ import android.util.Log
 import com.yausername.youtubedl_android.YoutubeDL
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import java.io.File
 
 /**
- * بوابة المحرك: تضمن أن تهيئة yt-dlp تعمل مرة واحدة فقط وبترتيب،
- * مهما كان عدد الجهات التي تطلبها (بدء التطبيق / Fetch / Service).
- * عند الفشل: تحذف الملفات المستخرجة التالفة وتحاول مرة ثانية.
+ * بوابة المحرك: تهيئة مؤمّنة + تحديث ذاتي لـ yt-dlp.
+ * يوتيوب يغيّر دفاعاته باستمرار، لذا نحدّث المحرك لأحدث إصدار رسمي
+ * مرة واحدة بعد كل تثبيت — وهذا ما يفتح الفيديوهات الحالية.
  */
 object Engine {
 
@@ -30,6 +29,7 @@ object Engine {
                     YoutubeDL.getInstance().init(context)
                     ready = true
                     Log.i("Engine", "yt-dlp initialized (attempt $attempt)")
+                    updateOnce(context)
                     return
                 } catch (e: Throwable) {
                     lastError = e
@@ -43,7 +43,30 @@ object Engine {
         }
     }
 
-    /** يحذف ملفات المحرك المستخرجة فقط — مجلد تنزيلاتنا يبقى آمنًا */
+    /**
+     * يحدّث yt-dlp لأحدث إصدار رسمي (مرة واحدة لكل تثبيت).
+     * عبر Reflection حتى لا ينكسر البناء لو اختلف اسم الدالة بين الإصدارات.
+     */
+    private fun updateOnce(context: Context) {
+        val prefs = context.getSharedPreferences("engine", Context.MODE_PRIVATE)
+        if (prefs.getBoolean("ytdlp_updated_v1", false)) return
+        runCatching {
+            val inst = YoutubeDL.getInstance()
+            val method = inst.javaClass.methods.firstOrNull { it.name == "updateYoutubeDL" }
+            if (method != null) {
+                Log.i("Engine", "updating yt-dlp to latest official release…")
+                method.invoke(inst, context)
+                Log.i("Engine", "yt-dlp updated successfully")
+            } else {
+                Log.w("Engine", "updateYoutubeDL not found — skipping")
+            }
+            prefs.edit().putBoolean("ytdlp_updated_v1", true).apply()
+        }.onFailure {
+            Log.w("Engine", "yt-dlp update skipped: ${it.message}")
+        }
+    }
+
+    /** يحذف ملفات المحرك التالفة فقط — مجلد تنزيلاتنا يبقى آمنًا */
     private fun cleanEngineFiles(context: Context) {
         val keep = setOf("downloads")
         context.filesDir.listFiles()?.forEach { f ->
