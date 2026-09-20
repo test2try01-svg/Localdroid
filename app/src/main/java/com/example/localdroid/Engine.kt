@@ -7,9 +7,10 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
 /**
- * بوابة المحرك: تهيئة مؤمّنة + تحديث ذاتي لـ yt-dlp.
- * يوتيوب يغيّر دفاعاته باستمرار، لذا نحدّث المحرك لأحدث إصدار رسمي
- * مرة واحدة بعد كل تثبيت — وهذا ما يفتح الفيديوهات الحالية.
+ * بوابة المحرك (مستوحاة من Seal):
+ * - تهيئة مؤمّنة ضد التعارض (Mutex)
+ * - تحديث ذاتي لـ yt-dlp يستدعي كل تواقيع updateYoutubeDL الممكنة
+ * - تنظيف الملفات التالفة وإعادة المحاولة
  */
 object Engine {
 
@@ -43,30 +44,39 @@ object Engine {
         }
     }
 
-    /**
-     * يحدّث yt-dlp لأحدث إصدار رسمي (مرة واحدة لكل تثبيت).
-     * عبر Reflection حتى لا ينكسر البناء لو اختلف اسم الدالة بين الإصدارات.
-     */
+    /** تحديث yt-dlp لأحدث إصدار — مرة واحدة عند النجاح فقط */
     private fun updateOnce(context: Context) {
         val prefs = context.getSharedPreferences("engine", Context.MODE_PRIVATE)
-        if (prefs.getBoolean("ytdlp_updated_v1", false)) return
+        if (prefs.getBoolean("ytdlp_updated_v3", false)) return
+        var done = false
         runCatching {
             val inst = YoutubeDL.getInstance()
-            val method = inst.javaClass.methods.firstOrNull { it.name == "updateYoutubeDL" }
-            if (method != null) {
-                Log.i("Engine", "updating yt-dlp to latest official release…")
-                method.invoke(inst, context)
-                Log.i("Engine", "yt-dlp updated successfully")
-            } else {
-                Log.w("Engine", "updateYoutubeDL not found — skipping")
+            val methods = inst.javaClass.methods.filter { it.name == "updateYoutubeDL" }
+            for (m in methods) {
+                if (done) break
+                runCatching {
+                    when (m.parameterCount) {
+                        1 -> { m.invoke(inst, context); done = true }
+                        2 -> {
+                            val second = m.parameterTypes[1]
+                            if (second.isEnum) {
+                                m.invoke(inst, context, second.enumConstants.first())
+                                done = true
+                            }
+                        }
+                    }
+                }.onFailure { Log.w("Engine", "signature ${m.parameterCount} failed: ${it.message}") }
             }
-            prefs.edit().putBoolean("ytdlp_updated_v1", true).apply()
-        }.onFailure {
-            Log.w("Engine", "yt-dlp update skipped: ${it.message}")
+        }.onFailure { Log.w("Engine", "update crash: ${it.message}") }
+
+        if (done) {
+            Log.i("Engine", "yt-dlp updated to latest release ✔")
+            prefs.edit().putBoolean("ytdlp_updated_v3", true).apply()
+        } else {
+            Log.w("Engine", "update will retry on next launch")
         }
     }
 
-    /** يحذف ملفات المحرك التالفة فقط — مجلد تنزيلاتنا يبقى آمنًا */
     private fun cleanEngineFiles(context: Context) {
         val keep = setOf("downloads")
         context.filesDir.listFiles()?.forEach { f ->
