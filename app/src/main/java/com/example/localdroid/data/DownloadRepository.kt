@@ -14,8 +14,19 @@ class DownloadRepository(private val context: Context) {
         private const val PREFS = "engine"
         private const val KEY_CLIENT = "working_youtube_client"
 
-        /** سلسلة عملاء التشغيل التي تتجاوز فحص البوت بدون كوكيز */
-        val CLIENT_CHAIN = listOf("", "tv", "tv_embedded", "android", "mweb", "web_embedded", "ios")
+        /**
+         * سلسلة عملاء التشغيل بترتيب الأفضلية (المثبت عمليًا في مجتمع yt-dlp):
+         * tv_embedded و tv يتجاوزان غالبًا فحص البوت ورسالة «reload».
+         */
+        val CLIENT_CHAIN = listOf(
+            "",              // الافتراضي أولًا (أسرع وأغنى بالصيغ إذا عمل)
+            "tv_embedded",
+            "tv",
+            "mweb",
+            "android",
+            "web_embedded",
+            "ios"
+        )
 
         fun savedClient(context: Context): String =
             context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -26,22 +37,35 @@ class DownloadRepository(private val context: Context) {
                 .edit().putString(KEY_CLIENT, client).apply()
         }
 
-        private fun isBotError(msg: String): Boolean =
+        /**
+         * كل رسائل الحجب المعروفة من يوتيوب التي تستحق تدوير العميل:
+         * فحص بوت + تسجيل دخول + «الصفحة تحتاج إعادة تحميل» + إعادة المحاولة.
+         */
+        private fun isRotatableError(msg: String): Boolean =
             msg.contains("Sign in", true) ||
             msg.contains("not a bot", true) ||
-            msg.contains("confirm you", true)
+            msg.contains("confirm you", true) ||
+            msg.contains("needs to be reloaded", true) ||
+            msg.contains("reload the page", true) ||
+            msg.contains("please reload", true) ||
+            msg.contains("Try again", true) ||
+            msg.contains("bot check", true)
     }
 
-    /** يضيف عميل التشغيل المختار للأمر */
+    /** يضيف عميل التشغيل + تخطي صيغ HLS المعطوبة */
     private fun YoutubeDLRequest.withClient(client: String): YoutubeDLRequest {
-        if (client.isNotBlank())
-            addOption("--extractor-args", "youtube:player_client=$client")
+        val args = if (client.isBlank())
+            "youtube:skip=hls"
+        else
+            "youtube:player_client=$client;skip=hls"
+        addOption("--extractor-args", args)
         return this
     }
 
     /**
-     * جلب المعلومات مع التدوير الذكي:
-     * يجرّب العميل المحفوظ أولًا، ثم بقية السلسلة طالما الخطأ من نوع «فحص بوت»
+     * جلب المعلومات مع التدوير الكامل:
+     * يستمر عبر كل العملاء طالما الخطأ من نوع «حجب قابل للتدوير»،
+     * ويحفظ أول عميل ناجح لاستخدامه فورًا في المرات القادمة.
      */
     suspend fun fetchInfo(rawUrl: String): VideoInfo = withContext(Dispatchers.IO) {
         val url = normalizeUrl(rawUrl)
@@ -68,7 +92,7 @@ class DownloadRepository(private val context: Context) {
                 return@withContext parseInfo(JSONObject(response.out))
             } catch (e: Exception) {
                 lastError = e
-                if (!isBotError(e.message ?: "")) break
+                if (!isRotatableError(e.message ?: "")) break
             }
         }
         throw IllegalArgumentException(mapError(lastError?.message ?: ""))
@@ -130,7 +154,8 @@ class DownloadRepository(private val context: Context) {
         msg.contains("Unable to download", true) -> "Network error — check your connection."
         msg.contains("Private video", true) -> "This video is private."
         msg.contains("age-restricted", true) -> "Age-restricted video — try again or use cookies."
-        msg.contains("Sign in", true) -> "All player clients blocked on this network — try another network (Wi-Fi/mobile data) or cookies."
+        msg.contains("Sign in", true) || msg.contains("reloaded", true) ->
+            "All player clients blocked on this network — try another network (Wi-Fi/mobile data) or cookies."
         msg.contains("removed", true) -> "Video has been removed."
         msg.contains("instance not initialized", true) -> "Engine still starting… wait 20 seconds and retry."
         else -> "Unsupported URL or platform: ${msg.take(200)}"
