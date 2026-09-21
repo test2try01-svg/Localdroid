@@ -1,7 +1,9 @@
 package com.example.localdroid.data
 
 import android.content.Context
+import com.example.localdroid.CookiesStore
 import com.example.localdroid.Engine
+import com.example.localdroid.GeckoViewExtractor
 import com.yausername.youtubedl_android.YoutubeDL
 import com.yausername.youtubedl_android.YoutubeDLRequest
 import kotlinx.coroutines.Dispatchers
@@ -14,33 +16,19 @@ class DownloadRepository(private val context: Context) {
         private const val PREFS = "engine"
         private const val KEY_CLIENT = "working_youtube_client"
 
-        /**
-         * سلسلة عملاء التشغيل بترتيب الأفضلية (المثبت عمليًا في مجتمع yt-dlp):
-         * tv_embedded و tv يتجاوزان غالبًا فحص البوت ورسالة «reload».
-         */
         val CLIENT_CHAIN = listOf(
-            "",              // الافتراضي أولًا (أسرع وأغنى بالصيغ إذا عمل)
-            "tv_embedded",
-            "tv",
-            "mweb",
-            "android",
-            "web_embedded",
-            "ios"
+            "", "tv_embedded", "tv", "mweb",
+            "web_embedded", "ios", "web_safari", "android_vr", "android"
         )
 
         fun savedClient(context: Context): String =
             context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
                 .getString(KEY_CLIENT, "") ?: ""
 
-        private fun saveClient(context: Context, client: String) {
+        private fun saveClient(context: Context, client: String) =
             context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
                 .edit().putString(KEY_CLIENT, client).apply()
-        }
 
-        /**
-         * كل رسائل الحجب المعروفة من يوتيوب التي تستحق تدوير العميل:
-         * فحص بوت + تسجيل دخول + «الصفحة تحتاج إعادة تحميل» + إعادة المحاولة.
-         */
         private fun isRotatableError(msg: String): Boolean =
             msg.contains("Sign in", true) ||
             msg.contains("not a bot", true) ||
@@ -49,56 +37,65 @@ class DownloadRepository(private val context: Context) {
             msg.contains("reload the page", true) ||
             msg.contains("please reload", true) ||
             msg.contains("Try again", true) ||
-            msg.contains("bot check", true)
+            msg.contains("bot check", true) ||
+            msg.contains("no longer supported", true) ||
+            msg.contains("this application or device", true)
     }
 
-    /** يضيف عميل التشغيل + تخطي صيغ HLS المعطوبة */
-    private fun YoutubeDLRequest.withClient(client: String): YoutubeDLRequest {
-        val args = if (client.isBlank())
-            "youtube:skip=hls"
-        else
-            "youtube:player_client=$client;skip=hls"
+    /** يضيف الكوكيز (إن وجدت) + عميل التشغيل + تخطي HLS */
+    private fun YoutubeDLRequest.decorate(client: String): YoutubeDLRequest {
+        CookiesStore.path(context)?.let { addOption("--cookies", it) }
+        val args = if (client.isBlank()) "youtube:skip=hls"
+                   else "youtube:player_client=$client;skip=hls"
         addOption("--extractor-args", args)
         return this
     }
 
-    /**
-     * جلب المعلومات مع التدوير الكامل:
-     * يستمر عبر كل العملاء طالما الخطأ من نوع «حجب قابل للتدوير»،
-     * ويحفظ أول عميل ناجح لاستخدامه فورًا في المرات القادمة.
-     */
-    suspend fun fetchInfo(rawUrl: String): VideoInfo = withContext(Dispatchers.IO) {
-        val url = normalizeUrl(rawUrl)
-        require(url.isNotBlank()) { "URL is empty" }
-
-        Engine.ensure(context)
-
+    /** محاولة yt-dlp مع تدوير العملاء — تُرجع null عند فشل الحجب */
+    private fun tryRotation(url: String): VideoInfo? {
         val saved = savedClient(context)
         val chain = if (saved.isBlank()) CLIENT_CHAIN
                     else listOf(saved) + CLIENT_CHAIN.filter { it != saved }
-
-        var lastError: Exception? = null
         for (client in chain) {
             val request = YoutubeDLRequest(url).apply {
                 addOption("--no-playlist")
                 addOption("--no-warnings")
                 addOption("--socket-timeout", "15")
                 addOption("-j")
-            }.withClient(client)
-
+            }.decorate(client)
             try {
                 val response = YoutubeDL.getInstance().execute(request)
                 saveClient(context, client)
-                return@withContext parseInfo(JSONObject(response.out))
+                return parseInfo(JSONObject(response.out))
             } catch (e: Exception) {
-                lastError = e
-                if (!isRotatableError(e.message ?: "")) break
+                if (!isRotatableError(e.message ?: "")) return null
             }
         }
-        throw IllegalArgumentException(mapError(lastError?.message ?: ""))
+        return null
     }
 
-    /** أمر التحميل يستخدم العميل الناجح المحفوظ تلقائيًا */
+    /**
+     * نظام ثلاثي المستويات:
+     * 1) yt-dlp + تدوير العملاء (+ الكوكيز المحصودة إن وجدت)
+     * 2) GeckoView: تجاوز فحص البوت + حصد الكوكيز
+     * 3) إعادة yt-dlp بالكوكيز الجديدة لجودات كاملة
+     */
+    suspend fun fetchInfo(rawUrl: String): VideoInfo = withContext(Dispatchers.IO) {
+        val url = normalizeUrl(rawUrl)
+        require(url.isNotBlank()) { "URL is empty" }
+        Engine.ensure(context)
+
+        tryRotation(url)?.let { return@withContext it }
+
+        try {
+            val geckoInfo = GeckoViewExtractor.extractVideoInfo(context, url)
+            tryRotation(url)?.let { return@withContext it }
+            return@withContext geckoInfo
+        } catch (e: Exception) {
+            throw IllegalArgumentException(mapError(e.message ?: "All engines failed"))
+        }
+    }
+
     fun buildRequest(url: String, quality: QualityOption, outputDir: String): YoutubeDLRequest {
         return YoutubeDLRequest(url).apply {
             addOption("--no-playlist")
@@ -121,7 +118,7 @@ class DownloadRepository(private val context: Context) {
                 )
             }
             addOption("--merge-output-format", "mp4")
-        }.withClient(savedClient(context))
+        }.decorate(savedClient(context))
     }
 
     private fun parseInfo(json: JSONObject): VideoInfo {
@@ -153,9 +150,9 @@ class DownloadRepository(private val context: Context) {
     private fun mapError(msg: String): String = when {
         msg.contains("Unable to download", true) -> "Network error — check your connection."
         msg.contains("Private video", true) -> "This video is private."
-        msg.contains("age-restricted", true) -> "Age-restricted video — try again or use cookies."
+        msg.contains("age-restricted", true) -> "Age-restricted video — cookies may help."
         msg.contains("Sign in", true) || msg.contains("reloaded", true) ->
-            "All player clients blocked on this network — try another network (Wi-Fi/mobile data) or cookies."
+            "YouTube blocked all engines on this network — try another network."
         msg.contains("removed", true) -> "Video has been removed."
         msg.contains("instance not initialized", true) -> "Engine still starting… wait 20 seconds and retry."
         else -> "Unsupported URL or platform: ${msg.take(200)}"
