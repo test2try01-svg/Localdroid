@@ -3,6 +3,8 @@ package com.example.localdroid.viewmodel
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.localdroid.Engine
+import com.example.localdroid.EngineState
 import com.example.localdroid.data.DownloadRepository
 import com.example.localdroid.data.VideoInfo
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -22,6 +24,10 @@ data class UiState(
 class DownloadViewModel(app: Application) : AndroidViewModel(app) {
 
     private val repo = DownloadRepository(app)
+
+    /** حالة المكوّنات المرئية (تظهر في بطاقة Engine components) */
+    val engineState: StateFlow<EngineState> = Engine.state
+
     private val _state = MutableStateFlow(UiState())
     val state: StateFlow<UiState> = _state.asStateFlow()
 
