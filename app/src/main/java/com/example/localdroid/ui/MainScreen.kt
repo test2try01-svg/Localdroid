@@ -51,6 +51,8 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
+import com.example.localdroid.EngineState
+import com.example.localdroid.Stage
 import com.example.localdroid.service.DownloadService
 import com.example.localdroid.viewmodel.DownloadViewModel
 
@@ -61,6 +63,7 @@ fun MainScreen(
     vm: DownloadViewModel = viewModel()
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
+    val engine by vm.engineState.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
 
@@ -76,7 +79,7 @@ fun MainScreen(
 
     val permLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
-    ) { /* يمكن تنبيه المستخدم هنا عند الرفض */ }
+    ) { }
 
     LaunchedEffect(Unit) {
         val missing = perms.filter {
@@ -99,6 +102,9 @@ fun MainScreen(
             modifier = Modifier.padding(padding).padding(16.dp).fillMaxSize(),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
+            // 🟢 بطاقة حالة المكوّنات المرئية
+            EngineStatusCard(engine)
+
             OutlinedCard {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text("Video URL", style = MaterialTheme.typography.titleMedium)
@@ -159,12 +165,14 @@ fun MainScreen(
 
                             LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.heightIn(max = 240.dp)) {
                                 itemsIndexed(info.qualities) { idx, q ->
+                                    val selected = idx == state.selectedQuality
                                     FilterChip(
-                                        selected = idx == state.selectedQuality,
+                                        selected = selected,
                                         onClick = { vm.onQualitySelect(idx) },
                                         label = { Text(q.label) },
-                                        leadingIcon = if (idx == state.selectedQuality)
-                                            {{ Icon(Icons.Default.Check, null, Modifier.size(16.dp)) }} else null
+                                        leadingIcon = if (selected) ({
+                                            Icon(Icons.Default.Check, null, Modifier.size(16.dp))
+                                        }) else null
                                     )
                                 }
                             }
@@ -196,6 +204,47 @@ fun MainScreen(
                 }
             }
         }
+    }
+}
+
+/** بطاقة حالة المكوّنات: كل شيء مرئي للمستخدم */
+@Composable
+fun EngineStatusCard(es: EngineState) {
+    OutlinedCard {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("Engine components", style = MaterialTheme.typography.titleSmall)
+            StatusRow("yt-dlp engine (extract from APK)", es.ytdlpInit)
+            StatusRow("yt-dlp latest update (network)", es.ytdlpUpdate)
+            StatusRow("FFmpeg (merge audio + video)", es.ffmpeg)
+            StatusRow("GeckoView (Firefox fallback)", es.gecko)
+            if (es.message.isNotBlank()) {
+                Text(
+                    es.message,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun StatusRow(label: String, stage: Stage) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Text(
+            text = when (stage) {
+                Stage.PENDING -> "○"
+                Stage.RUNNING -> "⏳"
+                Stage.DONE -> "✔"
+                Stage.FAILED -> "✖"
+                Stage.SKIPPED -> "⚠️"
+            },
+            style = MaterialTheme.typography.bodyMedium
+        )
+        Text(label, style = MaterialTheme.typography.bodySmall)
     }
 }
 
