@@ -129,7 +129,8 @@ object GeckoViewExtractor {
         """.trimIndent()
 
         try {
-            session.evaluateJavascript(js).accept { result ->
+            // ✅ الإصلاح: تصريح صريح عن نوع result كـ String?
+            session.evaluateJavascript(js).accept { result: String? ->
                 finish {
                     runCatching { session.close() }
                     try {
