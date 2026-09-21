@@ -6,7 +6,7 @@ plugins {
 
 android {
     namespace = "com.example.localdroid"
-    compileSdk = 34
+    compileSdk = 35
 
     defaultConfig {
         applicationId = "com.example.localdroid"
@@ -55,6 +55,6 @@ dependencies {
     implementation("io.github.junkfood02.youtubedl-android:library:0.17.2")
     implementation("io.github.junkfood02.youtubedl-android:ffmpeg:0.17.2")
 
-    // GeckoView — محرك Firefox (يتجاوز فحص البوت)
-    implementation("org.mozilla.geckoview:geckoview:latest.release")
+    // GeckoView 155 — محرك Firefox (يتجاوز فحص البوت)
+    implementation("org.mozilla.geckoview:geckoview:155.0.20260903215306")
 }
